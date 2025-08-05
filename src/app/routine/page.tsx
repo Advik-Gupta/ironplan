@@ -4,15 +4,11 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,8 +16,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuPortal,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -36,10 +30,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
+import PieChart from "@/components/PieChart";
+import EditSetsDialog from "@/components/EditSetsDialog";
 
 import { muscles } from "@/utils/contants";
+import { MuscleEntry, DaySplit, Split } from "@/interface";
 
 const groupedMuscles = muscles.reduce(
   (acc: Record<string, typeof muscles>, muscle) => {
@@ -50,34 +46,16 @@ const groupedMuscles = muscles.reduce(
   {}
 );
 
-// split = {
-//   monday: {
-//     muscleGroups: ["Chest", "Triceps"],
-//     muscles: {
-//       "Pectoralis Major": {
-//         sets: 4,
-//       },
-//       "Pectoralis Minor": {
-//         sets: 4,
-//       },
-//       "Triceps Brachii": {
-//         sets: 4,
-//       },
-//       Anconeus: {
-//         sets: 4,
-//       },
-//     },
-//   },
-// };
-
 export default function RoutinePage() {
   const [selectedMuscle, setSelectedMuscle] = useState<string | null>(null);
   const [day, setDay] = useState<string | null>(null);
   const [sets, setSets] = useState<number>(0);
-  const [split, setSplit] = useState<object | null>({});
+  const [split, setSplit] = useState<Split>({});
   const [selectedDayForDetails, setSelectedDayForDetails] = useState<
     string | null
   >(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [muscleToEdit, setMuscleToEdit] = useState<string | null>(null);
 
   const handleAddToRoutine = () => {
     if (!selectedMuscle || !day || sets <= 0) return;
@@ -112,15 +90,106 @@ export default function RoutinePage() {
       return newSplit;
     });
 
+    setSelectedDayForDetails(day);
     // Optionally reset selections
     setSelectedMuscle(null);
     setDay(null);
     setSets(0);
   };
 
+  const handleRemoveExercise = (muscleName: string) => {
+    if (!selectedDayForDetails) return;
+
+    setSplit((prev) => {
+      const newSplit = { ...prev };
+      const dayData = newSplit[selectedDayForDetails];
+
+      if (!dayData) return prev;
+
+      // Delete the muscle
+      delete dayData.muscles[muscleName];
+
+      // Remove muscle group if no muscles of that group remain
+      const remainingMuscleGroups = new Set(
+        Object.keys(dayData.muscles).map(
+          (muscle) => muscles.find((m) => m.name === muscle)?.group
+        )
+      );
+
+      dayData.muscleGroups = Array.from(remainingMuscleGroups).filter(
+        Boolean
+      ) as string[];
+
+      // If no muscles left, remove the day completely
+      if (Object.keys(dayData.muscles).length === 0) {
+        delete newSplit[selectedDayForDetails];
+        setSelectedDayForDetails(null); // close the details view
+      }
+
+      return newSplit;
+    });
+  };
+
+  const handleEditExercise = (muscleName: string) => {
+    setMuscleToEdit(muscleName);
+    setEditDialogOpen(true);
+  };
+
+  const transformDataForPieChart = (weeklyData: Split) => {
+    const groupTotals: Record<string, number> = {};
+
+    for (const day of Object.values(weeklyData)) {
+      const { muscleGroups, muscles } = day;
+
+      if (!muscleGroups || !muscles) continue;
+
+      let totalSets = 0;
+      for (const muscle of Object.values(muscles)) {
+        totalSets += muscle.sets;
+      }
+
+      muscleGroups.forEach((group) => {
+        groupTotals[group] = (groupTotals[group] || 0) + totalSets;
+      });
+    }
+
+    return Object.entries(groupTotals).map(([group, sets]) => ({
+      group,
+      sets,
+    }));
+  };
+
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold">Create your own split</h1>
+      {muscleToEdit && selectedDayForDetails && (
+        <EditSetsDialog
+          open={editDialogOpen}
+          onClose={() => setEditDialogOpen(false)}
+          muscleName={muscleToEdit}
+          currentSets={
+            split[selectedDayForDetails]?.muscles[muscleToEdit]?.sets ?? 0
+          }
+          onSave={(newSets) => {
+            setSplit((prev) => {
+              const newSplit = { ...prev };
+              const dayData = newSplit[selectedDayForDetails];
+
+              if (dayData && dayData.muscles[muscleToEdit]) {
+                dayData.muscles[muscleToEdit].sets = newSets;
+              }
+
+              return newSplit;
+            });
+          }}
+        />
+      )}
+      <div className="splits">
+        <h1 className="text-3xl font-bold">Your Splits</h1>
+        <p className="mt-2 text-gray-600">
+          Here you can see all the splits you have made.
+        </p>
+      </div>
+      <h1 className="text-3xl font-bold">Create a new split</h1>
       <p className="mt-2 text-gray-600">
         Here you can create your own split and connect them to workouts to
         formulate frequency and volume for each muscle group perfectly.
@@ -257,9 +326,9 @@ export default function RoutinePage() {
         )}
       </div>
       <div className="routine mt-5">
-        <h1 className="text-2xl font-bold">
-          Total number of days working out: {Object.keys(split)?.length || 0}
-        </h1>
+        <h3 className="text-lg font-semibold">
+          Total number of days working out: {Object.keys(split).length || 0}
+        </h3>
         <h1 className="text-2xl font-bold mt-2">Split: </h1>
         <div className="mt-2 flex gap-x-6">
           <div className="w-1/2">
@@ -329,14 +398,14 @@ export default function RoutinePage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleEditExercise(index)}
+                              onClick={() => handleEditExercise(muscle)}
                             >
                               Edit
                             </Button>
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => handleRemoveExercise(index)}
+                              onClick={() => handleRemoveExercise(muscle)}
                             >
                               Remove
                             </Button>
@@ -350,6 +419,11 @@ export default function RoutinePage() {
             )}
           </div>
         </div>
+      </div>
+      <div className="distribution">
+        <h1 className="text-2xl font-bold mt-2">Workout Distribution</h1>
+
+        <PieChart split={split} />
       </div>
       <div className="w-full mt-5 flex justify-center">
         <Button onClick={() => console.log(split)}>Save Split +</Button>
